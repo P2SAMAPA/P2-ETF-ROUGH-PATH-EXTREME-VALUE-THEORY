@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import json
-from huggingface_hub import HfFileSystem
+from huggingface_hub import HfFileSystem, HfApi
 from datetime import date, timedelta
 import config
+import os
 
 st.set_page_config(page_title="Rough Path EVT Engine", layout="wide")
 
@@ -44,7 +45,7 @@ st.markdown(
     '1-in-100-year path-shape events · Cross-sectional z-scores</div>',
     unsafe_allow_html=True)
 
-HF_TOKEN    = config.HF_TOKEN
+HF_TOKEN = config.HF_TOKEN or os.environ.get("HF_TOKEN", "")
 RESULTS_REPO = config.RESULTS_REPO
 
 US_HOLIDAYS = {
@@ -76,12 +77,22 @@ def tail_badge(xi: float) -> str:
 
 @st.cache_data(ttl=3600)
 def list_repo_files():
-    fs = HfFileSystem(token=HF_TOKEN)
+    """List files in the results repo with better error handling."""
+    if not HF_TOKEN:
+        st.sidebar.warning("⚠️ HF_TOKEN not set")
+        return []
+    
     try:
-        return [f["name"] for f in fs.ls(f"datasets/{RESULTS_REPO}",
-                                          detail=True, recursive=True)
-                if f["type"] == "file"]
+        api = HfApi(token=HF_TOKEN)
+        # Try to list files using HfApi
+        files = api.list_repo_files(
+            repo_id=RESULTS_REPO,
+            repo_type="dataset",
+            token=HF_TOKEN
+        )
+        return files
     except Exception as e:
+        st.sidebar.error(f"Error listing files: {str(e)}")
         return []
 
 
@@ -91,10 +102,21 @@ def find_latest(files, prefix):
 
 
 @st.cache_data(ttl=3600)
-def load_json(path):
-    fs = HfFileSystem(token=HF_TOKEN)
+def load_json_from_hf(path):
+    """Load JSON from HuggingFace with better error handling."""
+    if not HF_TOKEN:
+        return {"error": "HF_TOKEN not set"}
+    
     try:
-        with fs.open(path, "r") as f:
+        api = HfApi(token=HF_TOKEN)
+        # Download file content
+        content = api.hf_hub_download(
+            repo_id=RESULTS_REPO,
+            filename=path,
+            repo_type="dataset",
+            token=HF_TOKEN
+        )
+        with open(content, 'r') as f:
             return json.load(f)
     except Exception as e:
         return {"error": str(e)}
@@ -115,32 +137,45 @@ for col, desc, w, sign in config.MACRO_SIGNALS:
     st.sidebar.markdown(f"  • {col} ({arrow}, w={w:.0%})")
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-files     = list_repo_files()
+files = list_repo_files()
+
+if not files:
+    st.error("No files found in the results repository. Please run trainer.py first.")
+    st.info(f"Looking in: {RESULTS_REPO}")
+    st.stop()
+
+# Debug: Show what files are available
+with st.sidebar.expander("📁 Available files", expanded=False):
+    for f in files[:10]:
+        st.code(f)
+
 tab1_path = find_latest(files, "rough_evt_")
 tab2_path = find_latest(files, "rough_evt_windows_")
 
 if not tab1_path:
     st.error("No results found. Run trainer.py first.")
+    st.info("Looking for files with prefix: rough_evt_")
     st.stop()
 
-data1 = load_json(tab1_path)
+data1 = load_json_from_hf(tab1_path)
 if "error" in data1:
     st.error(f"Error loading data: {data1['error']}")
     st.stop()
 
-data2      = load_json(tab2_path) if tab2_path else None
-universes1 = data1["universes"]
-universes2 = data2["universes"] if data2 and "error" not in data2 else None
+data2 = load_json_from_hf(tab2_path) if tab2_path else None
+universes1 = data1.get("universes", {})
+universes2 = data2.get("universes", {}) if data2 and "error" not in data2 else None
 
 st.sidebar.markdown(f"**Run date:** `{data1.get('run_date','?')}`")
+st.sidebar.success(f"✅ Loaded {len(universes1)} universes")
 
 tab1, tab2 = st.tabs(["🏆 Tail Risk Summary", "🔍 Per-Window Explorer"])
 
-UNIVERSE_ORDER  = ["FI_COMMODITIES", "EQUITY_SECTORS", "COMBINED"]
+UNIVERSE_ORDER = ["FI_COMMODITIES", "EQUITY_SECTORS", "COMBINED"]
 UNIVERSE_LABELS = {
     "FI_COMMODITIES": "🏦 FI & Commodities",
     "EQUITY_SECTORS": "📈 Equity Sectors",
-    "COMBINED":       "🌐 Combined",
+    "COMBINED": "🌐 Combined",
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -181,26 +216,26 @@ with tab1:
         st.markdown(f'<div class="uni-title">{label}</div>', unsafe_allow_html=True)
 
         cols = st.columns(3)
-        for idx, etf in enumerate(top_risky):
+        for idx, etf in enumerate(top_risky[:3]):  # Only show top 3 in cards
             ticker = etf["ticker"]
             z_score = etf["z_score"]
-            
+
             # Get full data for this ticker
             full_data = uni_data.get("full_scores", {}).get(ticker, {})
             return_level = full_data.get("return_level_100yr", 0)
             tail_index = full_data.get("tail_index", 0)
             best_window = full_data.get("best_window", "N/A")
-            
+
             badge = risk_badge(z_score)
             tail_badge_html = tail_badge(tail_index)
-            
+
             with cols[idx]:
                 st.markdown(f"""
 <div class="hero-card">
   <div class="ticker">{ticker}</div>
   <div class="score">z-score = {z_score:+.3f}</div>
   <div class="score">{badge}</div>
-  <div class="score">1-in-100yr = {return_level:.4f}</div>
+  <div class="score">1-in-100yr = {return_level:.2f}</div>
   <div class="score">{tail_badge_html}</div>
   <div class="score">best window = {best_window}d</div>
   <div class="next-day">📅 {ntd}</div>
@@ -215,7 +250,7 @@ with tab1:
                     rows.append({
                         "ETF": t,
                         "z-score": round(info.get("z_score", 0), 4),
-                        "1-in-100yr": round(info.get("return_level_100yr", 0), 4),
+                        "1-in-100yr": round(info.get("return_level_100yr", 0), 2),
                         "Tail Index (ξ)": round(info.get("tail_index", 0), 4),
                         "Best Window (d)": info.get("best_window", "N/A")
                     })
@@ -248,16 +283,16 @@ with tab2:
         st.stop()
 
     win_labels = {
-        63:   "63d  (~3 months)",
-        252:  "252d (~1 year)",
-        504:  "504d (~2 years)",
+        63: "63d  (~3 months)",
+        252: "252d (~1 year)",
+        504: "504d (~2 years)",
         1008: "1008d (~4 years)",
         2016: "2016d (~8 years)",
         4032: "4032d (~16 years)",
         4536: "4536d (~18 years)",
     }
 
-    default_idx  = win_options.index(252) if 252 in win_options else 0
+    default_idx = win_options.index(252) if 252 in win_options else 0
     selected_win = st.selectbox(
         "Select lookback window",
         options=win_options,
@@ -278,7 +313,7 @@ with tab2:
     st.markdown(f"### Tail Risk Rankings at **{win_labels.get(selected_win, f'{selected_win}d')}** window")
 
     for universe_name in UNIVERSE_ORDER:
-        label    = UNIVERSE_LABELS.get(universe_name, universe_name)
+        label = UNIVERSE_LABELS.get(universe_name, universe_name)
         uni_data = universes2.get(universe_name, {})
         win_data = uni_data.get("windows", {}).get(win_key)
 
@@ -290,11 +325,11 @@ with tab2:
             continue
 
         cols = st.columns(3)
-        for idx, etf in enumerate(win_data.get("top_risky", [])):
+        for idx, etf in enumerate(win_data.get("top_risky", [])[:3]):
             ticker = etf["ticker"]
             z_score = etf["z_score"]
             badge = risk_badge(z_score)
-            
+
             with cols[idx]:
                 st.markdown(f"""
 <div class="win-card">
