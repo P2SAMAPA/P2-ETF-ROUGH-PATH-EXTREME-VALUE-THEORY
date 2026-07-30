@@ -5,6 +5,7 @@ Loads data, computes EVT scores for all tickers/windows, and builds JSON outputs
 
 import os
 import json
+import numpy as np
 import pandas as pd
 from datetime import datetime
 from typing import Dict, List
@@ -65,7 +66,8 @@ def run_trainer(hf_token: str = None) -> Dict:
             "windows": {}
         }
         
-        # For each ticker, compute scores across windows
+        # Store per-ticker per-window results
+        all_window_scores = {str(w): {} for w in WINDOW_DAYS}
         ticker_best_scores = {}
         
         for ticker in available:
@@ -91,9 +93,9 @@ def run_trainer(hf_token: str = None) -> Dict:
                         "threshold": result["threshold"],
                         "exceedances": result["exceedances"]
                     })
+                    all_window_scores[str(window)][ticker] = result["return_level_100yr"]
             
             if ticker_scores:
-                # Best window = highest return level
                 best = max(ticker_scores, key=lambda x: x["return_level"])
                 ticker_best_scores[ticker] = {
                     "score": best["return_level"],
@@ -109,7 +111,6 @@ def run_trainer(hf_token: str = None) -> Dict:
                          if not np.isnan(d["score"])}
             z_scores = compute_cross_sectional_zscore(raw_scores)
             
-            # Build Tab 1
             top_risky = sorted(
                 [(t, z_scores[t]) for t in z_scores if not np.isnan(z_scores[t])],
                 key=lambda x: x[1],
@@ -131,15 +132,7 @@ def run_trainer(hf_token: str = None) -> Dict:
             }
             
             # Build Tab 2: Per-window results
-            for window in WINDOW_DAYS:
-                window_scores = {}
-                for ticker, data in ticker_best_scores.items():
-                    # We need to recompute for this specific window
-                    # In practice, store per-window results in a cache
-                    # Here we use the best window data as proxy (simplified)
-                    if data["best_window"] == window:
-                        window_scores[ticker] = data["score"]
-                
+            for window_str, window_scores in all_window_scores.items():
                 if window_scores:
                     z_win = compute_cross_sectional_zscore(window_scores)
                     top_win = sorted(
@@ -148,7 +141,7 @@ def run_trainer(hf_token: str = None) -> Dict:
                         reverse=True
                     )[:5]
                     
-                    tab2_universe["windows"][str(window)] = {
+                    tab2_universe["windows"][window_str] = {
                         "top_risky": [
                             {"ticker": t, "z_score": z} for t, z in top_win
                         ],
