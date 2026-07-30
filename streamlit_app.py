@@ -132,4 +132,59 @@ def render_tab2(data):
     
     with col2:
         st.subheader("📊 Full Ranking")
-        ranking = window_data.get("full_ranking",
+        ranking = window_data.get("full_ranking", [])
+        if ranking:
+            rank_df = pd.DataFrame(ranking, columns=["Ticker", "Z-Score"])
+            rank_df = rank_df.sort_values("Z-Score", ascending=False)
+            st.dataframe(rank_df, use_container_width=True)
+        else:
+            st.info("No ranking data")
+    
+    # Distribution plot (if we had more data)
+    st.subheader("📈 Tail Risk Distribution")
+    st.caption("Z-scores distribution across all tickers for this window")
+    
+    if ranking:
+        scores = [r[1] for r in ranking if not pd.isna(r[1])]
+        if scores:
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots()
+            ax.hist(scores, bins=20, edgecolor='black', alpha=0.7)
+            ax.axvline(0, color='red', linestyle='--', label='Mean')
+            ax.set_xlabel("Z-Score")
+            ax.set_ylabel("Frequency")
+            ax.set_title(f"Distribution of Tail Risk Z-Scores ({selected_window}d)")
+            ax.legend()
+            st.pyplot(fig)
+
+
+def main():
+    st.title("🔮 Rough Path EVT Dashboard")
+    st.caption("Extreme Value Theory applied to path signatures")
+    
+    # Load data
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    tab1_data, tab2_data = load_results(run_date)
+    
+    if tab1_data is None or tab2_data is None:
+        st.error("Failed to load data. Please check the results repository.")
+        st.info(f"Looking for: rough_evt_{run_date}.json and rough_evt_windows_{run_date}.json")
+        return
+    
+    # Create tabs
+    tab1, tab2 = st.tabs(["📊 Tail Risk Summary", "📐 Per-Window Explorer"])
+    
+    with tab1:
+        render_tab1(tab1_data)
+    
+    with tab2:
+        render_tab2(tab2_data)
+    
+    # Footer
+    st.divider()
+    st.caption(f"Data from {RESULTS_REPO} | Run date: {run_date}")
+    st.caption("Powered by signatory (path signatures) + scipy (GPD fitting)")
+
+
+if __name__ == "__main__":
+    main()
