@@ -23,16 +23,16 @@ def compute_path_signature_terms(
     """
     Compute signature terms of a path using the Chen-Strichartz expansion.
     
-    For a path X, the signature is the collection of all iterated integrals:
-        S^0 = 1
-        S^1_i = ∫ dX_i
-        S^2_{ij} = ∫∫ dX_i ⊗ dX_j
-        S^3_{ijk} = ∫∫∫ dX_i ⊗ dX_j ⊗ dX_k
-    
-    This uses the lead-lag transformation for better numerical stability.
+    For a d-dimensional path X, the signature is the collection of all 
+    iterated integrals up to depth.
     """
     if len(path) < 2:
         return np.array([np.nan])
+    
+    # Get dimension of the path
+    if path.ndim == 1:
+        path = path.reshape(-1, 1)
+    d = path.shape[1]
     
     # Normalize path for numerical stability
     mean = np.mean(path, axis=0)
@@ -42,6 +42,9 @@ def compute_path_signature_terms(
     # Compute increments
     increments = np.diff(path_norm, axis=0)
     n = len(increments)
+    
+    if n == 0:
+        return np.array([1.0])
     
     sig_terms = []
     
@@ -53,9 +56,10 @@ def compute_path_signature_terms(
     sig_terms.extend(level1.tolist())
     
     if depth >= 2 and n > 1:
-        # Level 2: ∫∫ dX⊗dX (approximated via Riemann sums)
-        level2 = np.zeros((2, 2))
-        cumsum = np.zeros_like(increments[0])
+        # Level 2: ∫∫ dX⊗dX (Riemann sum approximation)
+        # For a d-dimensional path, this is a d×d matrix
+        level2 = np.zeros((d, d))
+        cumsum = np.zeros(d)
         for i in range(n):
             cumsum += increments[i]
             # Outer product with current increment
@@ -66,16 +70,19 @@ def compute_path_signature_terms(
     
     if depth >= 3 and n > 2:
         # Level 3: third-order iterated integrals
-        level3 = np.zeros((2, 2, 2))
-        cumsum2 = np.zeros((2, 2))
-        cumsum1 = np.zeros(2)
+        # This is a d×d×d tensor
+        level3 = np.zeros((d, d, d))
+        cumsum1 = np.zeros(d)
+        cumsum2 = np.zeros((d, d))
         for i in range(n):
-            # Update cumulative sums
             cumsum1 += increments[i]
-            # Update second-order cumsum
+            # Update second-order cumsum: ∫∫ dX⊗dX
             cumsum2 += np.outer(cumsum1, increments[i])
-            # Third-order term
-            level3 += np.einsum('ij,k->ijk', cumsum2, increments[i])
+            # Third-order term: ∫∫∫ dX⊗dX⊗dX
+            # For each j,k, add outer product of cumsum2[j,k] with increments[i]
+            for j in range(d):
+                for k in range(d):
+                    level3[j, k, :] += cumsum2[j, k] * increments[i]
         # Normalize
         level3 = level3 / (n ** 1.5)
         sig_terms.extend(level3.flatten().tolist())
@@ -90,6 +97,8 @@ def signature_l_infinity_norm(
 ) -> float:
     """
     Compute the L∞-norm of the truncated signature.
+    
+    Uses a 2D path: (time, returns) for the signature computation.
     """
     if len(returns) < 2:
         return np.nan
@@ -97,16 +106,10 @@ def signature_l_infinity_norm(
     # Construct path: time + returns (2D path)
     n = len(returns)
     t = np.linspace(0, 1, n)
-    path = np.column_stack([t, returns])
+    path = np.column_stack([t, returns])  # Shape: (n, 2)
     
-    # Apply lead-lag transformation for better financial path representation
-    # Lead-lag: (X_t, X_{t+1}) for each consecutive pair
-    lead_lag = np.column_stack([path[:-1], path[1:]])
-    # Reshape to 2D: each row is (time_t, return_t, time_{t+1}, return_{t+1})
-    lead_lag_flat = lead_lag.reshape(-1, 4)
-    
-    # Compute signature terms on lead-lag path
-    sig_terms = compute_path_signature_terms(lead_lag_flat, depth)
+    # Compute signature terms
+    sig_terms = compute_path_signature_terms(path, depth)
     
     # L∞ norm
     if len(sig_terms) == 0 or np.all(np.isnan(sig_terms)):
@@ -177,7 +180,7 @@ def return_level(
     """
     Compute the 1-in-N-year return level.
     
-    Formula: Return Level = u + (σ/ξ) * ((N*ζ_u)^ξ - 1)
+    Formula: Return Level = (σ/ξ) * ((N*ζ_u)^ξ - 1)
     """
     if any(np.isnan([xi, sigma, exceed_prob])) or exceed_prob <= 0:
         return np.nan
