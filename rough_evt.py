@@ -1,20 +1,26 @@
 """
-Core Rough Path EVT engine:
-- Path signature computation via signatory
-- L∞-norm of signature over sliding windows
-- GPD fitting to extreme values
-- Return level calculation
+Core Rough Path EVT engine using esig + iisignature (no PyTorch dependency).
 """
 
 import numpy as np
 import pandas as pd
-import torch
-import signatory
 from scipy.stats import genpareto
-from scipy.optimize import minimize
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple
 import warnings
 warnings.filterwarnings("ignore")
+
+# Try esig first, fall back to iisignature
+try:
+    import esig
+    HAS_ESIG = True
+except ImportError:
+    HAS_ESIG = False
+    try:
+        import iisignature
+        HAS_IISIG = True
+    except ImportError:
+        HAS_IISIG = False
+        raise ImportError("Install esig or iisignature for path signature computation")
 
 
 def compute_log_returns(prices: pd.Series) -> pd.Series:
@@ -28,38 +34,30 @@ def path_signature_norm(
     lookahead: int = 5
 ) -> float:
     """
-    Compute the L∞-norm of the truncated signature for a path segment.
-    
-    Args:
-        returns: Array of log returns over the window
-        depth: Truncation depth of the signature
-        lookahead: Forward horizon to include in path shape
-        
-    Returns:
-        L∞-norm of the truncated signature
+    Compute the L∞-norm of the truncated signature using esig or iisignature.
     """
     if len(returns) < 2:
         return np.nan
     
     # Construct path: time + returns (2D path)
     n = len(returns)
-    # Normalize time to [0,1] for numerical stability
     t = np.linspace(0, 1, n)
     path = np.column_stack([t, returns])
     
-    # Convert to torch tensor
-    path_tensor = torch.tensor(path, dtype=torch.float32).unsqueeze(0)  # (1, T, 2)
-    
     try:
-        # Compute signature up to depth
-        sig = signatory.signature(
-            path_tensor,
-            depth=depth,
-            basepoint=True
-        )
-        # L∞ norm of the signature vector
-        sig_norm = torch.max(torch.abs(sig)).item()
-        return sig_norm
+        if HAS_ESIG:
+            # esig: stream is (n, d) array
+            sig = esig.stream2sig(path, depth)
+            # L∞ norm
+            sig_norm = np.max(np.abs(sig))
+            return float(sig_norm)
+        elif HAS_IISIG:
+            # iisignature: computes signature
+            sig = iisignature.prepare(path, depth, include_time=False)
+            sig_norm = np.max(np.abs(sig))
+            return float(sig_norm)
+        else:
+            return np.nan
     except Exception:
         return np.nan
 
@@ -70,26 +68,12 @@ def rolling_signature_norms(
     depth: int = 3,
     lookahead: int = 5
 ) -> pd.Series:
-    """
-    Compute rolling L∞-norm of path signature.
-    
-    Args:
-        returns: Log returns series
-        window_days: Rolling window size
-        depth: Signature truncation depth
-        lookahead: Forward horizon
-        
-    Returns:
-        Series of signature norms (aligned with returns index)
-    """
+    """Compute rolling L∞-norm of path signature."""
     norms = []
     dates = []
     
     for i in range(window_days + lookahead, len(returns)):
-        # Window of returns for signature computation
         window_returns = returns.iloc[i - window_days:i].values
-        
-        # Include lookahead returns to capture forward path shape
         lookahead_returns = returns.iloc[i:i + lookahead].values
         full_path = np.concatenate([window_returns, lookahead_returns])
         
@@ -105,16 +89,7 @@ def fit_gpd(
     data: np.ndarray,
     threshold_quantile: float = 0.95
 ) -> Tuple[float, float, float, int, float]:
-    """
-    Fit Generalized Pareto Distribution to exceedances over threshold.
-    
-    Returns:
-        threshold: The threshold value
-        xi: Shape parameter (tail index)
-        sigma: Scale parameter
-        n_exceedances: Number of exceedances
-        exceedance_prob: Probability of exceeding threshold (ζ_u)
-    """
+    """Fit Generalized Pareto Distribution to exceedances."""
     if len(data) < 20:
         return np.nan, np.nan, np.nan, 0, np.nan
     
@@ -125,7 +100,6 @@ def fit_gpd(
         return threshold, np.nan, np.nan, len(exceedances), np.nan
     
     try:
-        # Fit GPD using MLE
         xi, loc, sigma = genpareto.fit(exceedances, floc=0)
         n_exceed = len(exceedances)
         exceed_prob = n_exceed / len(data)
@@ -141,34 +115,16 @@ def return_level(
     n_years: int = 100,
     data_points_per_year: int = 252
 ) -> float:
-    """
-    Compute the 1-in-N-year return level.
-    
-    Args:
-        xi: Shape parameter (tail index)
-        sigma: Scale parameter
-        exceed_prob: Probability of exceeding threshold (ζ_u)
-        n_years: Return period in years
-        data_points_per_year: Trading days per year
-        
-    Returns:
-        Return level (in log-return units)
-    """
+    """Compute the 1-in-N-year return level."""
     if any(np.isnan([xi, sigma, exceed_prob])) or exceed_prob <= 0:
         return np.nan
     
-    # N-year return period in terms of data points
     N = n_years * data_points_per_year
     
-    # Return level formula: u + (σ/ξ) * ((N*ζ_u)^ξ - 1)
-    # Note: ζ_u = P(X > u)
     if abs(xi) < 1e-10:
-        # Gumbel limit (ξ → 0)
-        return_level_val = sigma * np.log(N * exceed_prob)
+        return sigma * np.log(N * exceed_prob)
     else:
-        return_level_val = (sigma / xi) * ((N * exceed_prob) ** xi - 1)
-    
-    return max(0, return_level_val)  # Return level should be non-negative
+        return (sigma / xi) * ((N * exceed_prob) ** xi - 1)
 
 
 def compute_rough_evt(
@@ -179,19 +135,7 @@ def compute_rough_evt(
     threshold_quantile: float = 0.95,
     return_period_years: int = 100
 ) -> Dict:
-    """
-    Compute full Rough-EVT analysis for a single ticker.
-    
-    Returns:
-        Dictionary with:
-        - return_level_100yr: 1-in-100-year signature norm
-        - tail_index: GPD shape parameter (ξ)
-        - threshold: EVT threshold value
-        - exceedances: Number of exceedances
-        - best_window: The window used
-        - lookahead: The lookahead used
-    """
-    # Compute log returns
+    """Compute full Rough-EVT analysis for a single ticker."""
     returns = compute_log_returns(prices)
     if len(returns) < window_days + lookahead + 20:
         return {
@@ -204,7 +148,6 @@ def compute_rough_evt(
             "error": "Insufficient data"
         }
     
-    # Compute rolling signature norms
     norms = rolling_signature_norms(
         returns,
         window_days=window_days,
@@ -223,7 +166,6 @@ def compute_rough_evt(
             "error": f"Insufficient norms: {len(norms)}"
         }
     
-    # Fit GPD
     threshold, xi, sigma, n_exceed, exceed_prob = fit_gpd(
         norms.values,
         threshold_quantile=threshold_quantile
@@ -240,7 +182,6 @@ def compute_rough_evt(
             "error": "GPD fit failed or insufficient exceedances"
         }
     
-    # Compute return level
     rl = return_level(xi, sigma, exceed_prob, n_years=return_period_years)
     
     return {
@@ -255,12 +196,8 @@ def compute_rough_evt(
     }
 
 
-def compute_cross_sectional_zscore(
-    scores: Dict[str, float]
-) -> Dict[str, float]:
-    """
-    Compute cross-sectional z-scores within a universe.
-    """
+def compute_cross_sectional_zscore(scores: Dict[str, float]) -> Dict[str, float]:
+    """Compute cross-sectional z-scores within a universe."""
     values = np.array([v for v in scores.values() if not np.isnan(v)])
     if len(values) < 2:
         return {t: np.nan for t in scores.keys()}
