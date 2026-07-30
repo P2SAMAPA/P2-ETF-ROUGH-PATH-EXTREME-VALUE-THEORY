@@ -13,13 +13,21 @@ st.markdown("""
 .main-header{font-size:2.3rem;font-weight:700;color:#1a1a2e;margin-bottom:0.2rem}
 .sub-header{font-size:1rem;color:#555;margin-bottom:1.5rem}
 .uni-title{font-size:1.3rem;font-weight:600;margin-top:1rem;margin-bottom:0.8rem;
-           padding-left:0.5rem;border-left:5px solid #e94560}
-.hero-card{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);
-           color:white;border-radius:16px;padding:1.2rem;margin:0.4rem;text-align:center;
-           box-shadow:0 6px 20px rgba(233,69,96,0.3)}
-.win-card{background:linear-gradient(135deg,#0f3460 0%,#533483 100%);color:white;
-          border-radius:16px;padding:1.2rem;margin:0.4rem;text-align:center;
-          box-shadow:0 4px 12px rgba(83,52,131,0.3)}
+           padding-left:0.5rem;border-left:5px solid #27ae60}
+.uni-title-risk{font-size:1.3rem;font-weight:600;margin-top:1rem;margin-bottom:0.8rem;
+                padding-left:0.5rem;border-left:5px solid #e74c3c}
+.hero-card-buy{background:linear-gradient(135deg,#1a472a 0%,#2d6a4f 60%,#40916c 100%);
+               color:white;border-radius:16px;padding:1.2rem;margin:0.4rem;text-align:center;
+               box-shadow:0 6px 20px rgba(39,174,96,0.3)}
+.hero-card-sell{background:linear-gradient(135deg,#4a1a1a 0%,#6a2d2d 60%,#914040 100%);
+                color:white;border-radius:16px;padding:1.2rem;margin:0.4rem;text-align:center;
+                box-shadow:0 6px 20px rgba(231,76,60,0.3)}
+.win-card-buy{background:linear-gradient(135deg,#1a472a 0%,#2d6a4f 100%);
+              color:white;border-radius:16px;padding:1.2rem;margin:0.4rem;text-align:center;
+              box-shadow:0 4px 12px rgba(39,174,96,0.3)}
+.win-card-sell{background:linear-gradient(135deg,#4a1a1a 0%,#6a2d2d 100%);
+               color:white;border-radius:16px;padding:1.2rem;margin:0.4rem;text-align:center;
+               box-shadow:0 4px 12px rgba(231,76,60,0.3)}
 .ticker{font-size:1.6rem;font-weight:800;letter-spacing:1px}
 .score{font-size:0.9rem;margin-top:0.3rem;opacity:0.85}
 .next-day{font-size:0.8rem;margin-top:0.2rem;opacity:0.7}
@@ -37,12 +45,12 @@ st.markdown("""
                      font-weight:700;color:white}
 .tail-badge-thin{background:#27ae60;border-radius:6px;padding:2px 8px;font-size:0.7rem;
                  font-weight:700;color:white}
-.metric-box{background:#f8f9fa;border-radius:10px;padding:0.8rem;margin:0.3rem 0;
-            border-left:4px solid #e94560}
-.metric-label{font-size:0.75rem;color:#666;text-transform:uppercase;letter-spacing:0.5px}
-.metric-value{font-size:1.1rem;font-weight:700;color:#1a1a2e}
-.window-badge{background:#2c3e50;border-radius:12px;padding:4px 12px;font-size:0.7rem;
-              color:white;font-weight:600;display:inline-block}
+.buy-signal{background:#27ae60;border-radius:6px;padding:2px 12px;font-size:0.8rem;
+            font-weight:700;color:white;display:inline-block}
+.sell-signal{background:#e74c3c;border-radius:6px;padding:2px 12px;font-size:0.8rem;
+             font-weight:700;color:white;display:inline-block}
+.neutral-signal{background:#f39c12;border-radius:6px;padding:2px 12px;font-size:0.8rem;
+                font-weight:700;color:white;display:inline-block}
 </style>
 """, unsafe_allow_html=True)
 
@@ -82,6 +90,13 @@ def tail_badge(xi: float) -> str:
     elif xi > 0.3:  return f'<span class="tail-badge-heavy">ξ = {xi:.3f} (HEAVY)</span>'
     elif xi > 0.0:  return f'<span class="tail-badge-moderate">ξ = {xi:.3f} (MODERATE)</span>'
     else:           return f'<span class="tail-badge-thin">ξ = {xi:.3f} (THIN)</span>'
+
+def action_signal(score: float) -> str:
+    if score < -1.0:    return f'<span class="buy-signal">🟢 STRONG BUY</span>'
+    elif score < -0.5:  return f'<span class="buy-signal">🟢 BUY</span>'
+    elif score < 0.5:   return f'<span class="neutral-signal">🟡 HOLD</span>'
+    elif score < 1.0:   return f'<span class="sell-signal">🔴 REDUCE</span>'
+    else:               return f'<span class="sell-signal">🔴 STRONG SELL</span>'
 
 
 @st.cache_data(ttl=3600)
@@ -152,7 +167,6 @@ if not files:
     st.info(f"Looking in: {RESULTS_REPO}")
     st.stop()
 
-# Debug: Show what files are available
 with st.sidebar.expander("📁 Available files", expanded=False):
     for f in files[:10]:
         st.code(f)
@@ -178,7 +192,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Run date:** `{data1.get('run_date','?')}`")
 st.sidebar.success(f"✅ Loaded {len(universes1)} universes")
 
-tab1, tab2 = st.tabs(["🏆 Tail Risk Summary", "🔍 Per-Window Explorer"])
+tab1, tab2 = st.tabs(["🏆 Best Buys - Low Risk", "🔍 Per-Window Buys"])
 
 UNIVERSE_ORDER = ["FI_COMMODITIES", "EQUITY_SECTORS", "COMBINED"]
 UNIVERSE_LABELS = {
@@ -190,92 +204,117 @@ UNIVERSE_LABELS = {
 ntd = next_trading_day()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 1
+# TAB 1 - BEST BUYS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab1:
-    st.header("🏆 Tail Risk Summary — Worst-Case Path-Shape Events")
+    st.header("🏆 Best ETFs to ADD — Lowest Path-Shape Risk")
 
-    with st.expander("📖 How Rough Path EVT Works", expanded=True):
+    with st.expander("📖 How to Read This", expanded=True):
         st.markdown("""
-**Rough Path Extreme Value Theory (EVT)** applies extreme value theory directly to the **signature of a rough path** — treating an asset's price trajectory as a geometric object, not just a terminal scalar.
+**This view shows the BEST ETFs to ADD to your portfolio** — those with the lowest path-shape risk.
 
-| Step | What happens |
-|------|-------------|
-| 1. Log returns | Convert prices to log-returns |
-| 2. Path signature | Compute iterated integrals of the path (depth 3) |
-| 3. L∞-norm | Take the maximum absolute value of all signature terms |
-| 4. Peaks-Over-Threshold | Select exceedances above the 95th percentile |
-| 5. GPD fit | Fit Generalized Pareto Distribution to the tail |
-| 6. Return level | Compute 1-in-100-year event for the path shape |
+| Metric | What to Look For | Signal |
+|--------|------------------|--------|
+| **z-score** | **NEGATIVE** z-score = lower risk than peers | 🟢 z < -0.5 = BUY |
+| **Tail Index (ξ)** | **LOW** tail index = thinner tails, less extreme risk | 🟢 ξ < 0.2 = SAFER |
+| **1-in-100yr** | **LOWER** return level = smaller worst-case path event | 🟢 Lower is better |
 
-**High z-score + heavy tail (ξ > 0.3)** → ETF has extreme path-shape risk → **CAUTION**
+**Best case:** z-score < -1.0 + tail index < 0.2 = **STRONG BUY** (low risk, thin tails)
 
-**Low z-score + thin tail (ξ < 0)** → ETF has stable path geometry → **SAFER**
-
-**Tail index (ξ):** ξ > 0 = Fréchet (fat tail) · ξ = 0 = Gumbel · ξ < 0 = Weibull (bounded)
+**Worst case:** z-score > 1.0 + tail index > 0.3 = **STRONG SELL** (high risk, heavy tails)
         """)
 
     for universe_name in UNIVERSE_ORDER:
         uni_data = universes1.get(universe_name, {})
-        top_risky = uni_data.get("top_risky", [])
-        if not top_risky:
+        full_scores = uni_data.get("full_scores", {})
+        
+        if not full_scores:
             continue
 
         label = UNIVERSE_LABELS.get(universe_name, universe_name)
-        st.markdown(f'<div class="uni-title">{label}</div>', unsafe_allow_html=True)
+        
+        # Sort by z-score (lowest = best to buy)
+        sorted_etfs = sorted(
+            [{"ticker": t, **info} for t, info in full_scores.items()],
+            key=lambda x: x.get("z_score", 999)
+        )
+        
+        # Top 3 best buys (lowest z-score)
+        best_buys = sorted_etfs[:3]
+        
+        # Top 3 worst (highest z-score - to avoid)
+        worst_risky = sorted_etfs[-3:][::-1]
 
+        # Show Best Buys
+        st.markdown(f'<div class="uni-title">🟢 {label} — Best Buys (Lowest Risk)</div>', unsafe_allow_html=True)
+        
         cols = st.columns(3)
-        for idx, etf in enumerate(top_risky[:3]):
+        for idx, etf in enumerate(best_buys):
             ticker = etf["ticker"]
-            z_score = etf["z_score"]
-
-            full_data = uni_data.get("full_scores", {}).get(ticker, {})
-            return_level = full_data.get("return_level_100yr", 0)
-            tail_index = full_data.get("tail_index", 0)
-            best_window = full_data.get("best_window", "N/A")
+            z_score = etf.get("z_score", 0)
+            return_level = etf.get("return_level_100yr", 0)
+            tail_index = etf.get("tail_index", 0)
+            best_window = etf.get("best_window", "N/A")
 
             badge = risk_badge(z_score)
             tail_badge_html = tail_badge(tail_index)
+            signal = action_signal(z_score)
 
             with cols[idx]:
                 st.markdown(f"""
-<div class="hero-card">
+<div class="hero-card-buy">
   <div class="ticker">{ticker}</div>
   <div class="score">z-score = {z_score:+.3f}</div>
   <div class="score">{badge}</div>
-  <div class="score">1-in-100yr = {return_level:.2f}</div>
+  <div class="score">{signal}</div>
   <div class="score">{tail_badge_html}</div>
+  <div class="score">1-in-100yr = {return_level:.2f}</div>
   <div class="score">best window = {best_window}d</div>
   <div class="next-day">📅 {ntd}</div>
 </div>
 """, unsafe_allow_html=True)
 
-        with st.expander(f"📋 Full ranking — {label}"):
-            full = uni_data.get("full_scores", {})
-            if full:
-                rows = []
-                for t, info in full.items():
-                    rows.append({
-                        "ETF": t,
-                        "z-score": round(info.get("z_score", 0), 4),
-                        "1-in-100yr": round(info.get("return_level_100yr", 0), 2),
-                        "Tail Index (ξ)": round(info.get("tail_index", 0), 4),
-                        "Best Window (d)": info.get("best_window", "N/A")
-                    })
-                df_rank = pd.DataFrame(rows).sort_values("z-score", ascending=False)
-                st.dataframe(df_rank, use_container_width=True, hide_index=True)
+        # Show Worst (to avoid) in a smaller expander
+        with st.expander(f"🔴 {label} — ETFs to AVOID (Highest Risk)"):
+            rows = []
+            for etf in worst_risky:
+                rows.append({
+                    "ETF": etf["ticker"],
+                    "z-score": round(etf.get("z_score", 0), 4),
+                    "1-in-100yr": round(etf.get("return_level_100yr", 0), 2),
+                    "Tail Index (ξ)": round(etf.get("tail_index", 0), 4),
+                    "Best Window": etf.get("best_window", "N/A"),
+                    "Action": "SELL" if etf.get("z_score", 0) > 0.5 else "REDUCE"
+                })
+            df_rank = pd.DataFrame(rows).sort_values("z-score", ascending=False)
+            st.dataframe(df_rank, use_container_width=True, hide_index=True)
+
+        # Full ranking table
+        with st.expander(f"📋 Full ranking — {label} (all ETFs)"):
+            rows = []
+            for etf in sorted_etfs:
+                rows.append({
+                    "ETF": etf["ticker"],
+                    "z-score": round(etf.get("z_score", 0), 4),
+                    "1-in-100yr": round(etf.get("return_level_100yr", 0), 2),
+                    "Tail Index (ξ)": round(etf.get("tail_index", 0), 4),
+                    "Best Window": etf.get("best_window", "N/A"),
+                    "Signal": "BUY" if etf.get("z_score", 0) < -0.5 else ("HOLD" if etf.get("z_score", 0) < 0.5 else "SELL")
+                })
+            df_rank = pd.DataFrame(rows).sort_values("z-score", ascending=True)
+            st.dataframe(df_rank, use_container_width=True, hide_index=True)
         st.divider()
 
     st.caption(f"Run date: {data1.get('run_date','?')} · "
-               "Path signature + EVT · 1-in-100-year return level · "
+               "Lowest z-score = Best to Buy · Path signature + EVT · "
                "Cross-sectional z-score · Tail index (ξ)")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2
+# TAB 2 - PER-WINDOW BUYS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2:
-    st.header("🔍 Explore Tail Risk by Window")
+    st.header("🔍 Best ETFs to ADD by Window")
 
     if not universes2:
         st.warning("Window-level data not found. Re-run trainer.")
@@ -291,13 +330,13 @@ with tab2:
         st.stop()
 
     win_labels = {
-        63: "63d  (~3 months)",
-        252: "252d (~1 year)",
-        504: "504d (~2 years)",
-        1008: "1008d (~4 years)",
-        2016: "2016d (~8 years)",
-        4032: "4032d (~16 years)",
-        4536: "4536d (~18 years)",
+        63: "63d  (~3 months) — Tactical",
+        252: "252d (~1 year) — Core Signal",
+        504: "504d (~2 years) — Medium-Term",
+        1008: "1008d (~4 years) — Structural",
+        2016: "2016d (~8 years) — Secular",
+        4032: "4032d (~16 years) — Long-Term",
+        4536: "4536d (~18 years) — Full History",
     }
 
     default_idx = win_options.index(252) if 252 in win_options else 0
@@ -309,16 +348,20 @@ with tab2:
     )
     win_key = str(selected_win)
 
-    with st.expander("ℹ️ Window guidance", expanded=False):
+    with st.expander("ℹ️ Window guidance — Which to use?", expanded=False):
         st.markdown("""
-- **63d** — Short-term path-shape risk: captures recent geometric patterns
-- **252d** — Annual path risk: recommended primary signal for tail events
-- **504d–1008d** — Medium-term structural path regimes
-- **2016d+** — Very long-run path geometry (secular cycles)
-- **4032d / 4536d** — Full history path shape analysis (2008–present)
+| Window | Best For | Trading Use |
+|--------|----------|-------------|
+| **63d** | Tactical trading | Short-term entries/exits |
+| **252d** | Core signal | Primary allocation decisions |
+| **504d** | Medium-term | Trend confirmation |
+| **1008d** | Structural | Regime identification |
+| **2016d+** | Secular | Strategic allocation |
+
+**Rule of thumb:** Use 252d for primary signals, confirm with 63d for momentum.
         """)
 
-    st.markdown(f"### Tail Risk Rankings at **{win_labels.get(selected_win, f'{selected_win}d')}** window")
+    st.markdown(f"### Best Buys at **{win_labels.get(selected_win, f'{selected_win}d')}** window")
 
     for universe_name in UNIVERSE_ORDER:
         label = UNIVERSE_LABELS.get(universe_name, universe_name)
@@ -332,81 +375,102 @@ with tab2:
             st.divider()
             continue
 
-        # Get full scores from tab1 for this universe to use as fallback
-        tab1_universe_data = universes1.get(universe_name, {})
-        tab1_full_scores = tab1_universe_data.get("full_scores", {})
-
-        cols = st.columns(3)
-        top_risky = win_data.get("top_risky", [])
+        # Get full ranking and sort by z-score (lowest = best to buy)
+        full_ranking = win_data.get("full_ranking", [])
         
-        for idx, etf in enumerate(top_risky[:3]):
+        if not full_ranking:
+            st.info(f"No ranking data for {universe_name} at {selected_win}d.")
+            st.divider()
+            continue
+
+        # Parse ranking data
+        parsed_etfs = []
+        for item in full_ranking:
+            if len(item) >= 4:
+                # New format: [ticker, z_score, tail_index, return_level]
+                parsed_etfs.append({
+                    "ticker": item[0],
+                    "z_score": item[1],
+                    "tail_index": item[2],
+                    "return_level": item[3]
+                })
+            else:
+                # Old format: [ticker, z_score]
+                ticker = item[0]
+                z_score = item[1]
+                # Try to get tail index from tab1
+                tab1_data = universes1.get(universe_name, {}).get("full_scores", {}).get(ticker, {})
+                parsed_etfs.append({
+                    "ticker": ticker,
+                    "z_score": z_score,
+                    "tail_index": tab1_data.get("tail_index", 0),
+                    "return_level": tab1_data.get("return_level_100yr", 0)
+                })
+
+        # Sort by z-score (lowest = best to buy)
+        sorted_etfs = sorted(parsed_etfs, key=lambda x: x["z_score"])
+        
+        # Top 3 best buys
+        best_buys = sorted_etfs[:3]
+        
+        # Top 3 worst (to avoid)
+        worst_risky = sorted_etfs[-3:][::-1]
+
+        # Show Best Buys
+        st.markdown(f'#### 🟢 Top 3 Buys at {selected_win}d', unsafe_allow_html=True)
+        
+        cols = st.columns(3)
+        for idx, etf in enumerate(best_buys):
             ticker = etf["ticker"]
             z_score = etf["z_score"]
-            
-            # First try to get tail index from tab1 data (fallback)
-            full_data = tab1_full_scores.get(ticker, {})
-            tail_index = full_data.get("tail_index", 0)
-            return_level = full_data.get("return_level_100yr", 0)
-            
-            # Check if window data has enriched format with tail index
-            # The full_ranking now has 4 elements: [ticker, z_score, tail_index, return_level]
-            full_ranking = win_data.get("full_ranking", [])
-            for item in full_ranking:
-                if len(item) >= 4 and item[0] == ticker:
-                    # Override with window-specific values if available
-                    tail_index = item[2] if len(item) > 2 else tail_index
-                    return_level = item[3] if len(item) > 3 else return_level
-                    break
-            
+            tail_index = etf["tail_index"]
+            return_level = etf["return_level"]
+
             badge = risk_badge(z_score)
             tail_badge_html = tail_badge(tail_index)
+            signal = action_signal(z_score)
 
             with cols[idx]:
                 st.markdown(f"""
-<div class="win-card">
+<div class="win-card-buy">
   <div class="ticker">{ticker}</div>
   <div class="score">z-score = {z_score:+.3f}</div>
   <div class="score">{badge}</div>
+  <div class="score">{signal}</div>
   <div class="score">{tail_badge_html}</div>
   <div class="score">1-in-100yr = {return_level:.2f}</div>
   <div class="next-day">window = {selected_win}d · 📅 {ntd}</div>
 </div>
 """, unsafe_allow_html=True)
 
-        with st.expander(f"📋 Full ranking — {label} @ {selected_win}d"):
-            rows = win_data.get("full_ranking", [])
-            if rows:
-                # Check if rows have 2 or 4 elements (new format has 4: ticker, z_score, tail_index, return_level)
-                if rows and len(rows[0]) >= 4:
-                    # New format with tail index and return level
-                    enriched_rows = []
-                    for item in rows:
-                        enriched_rows.append({
-                            "ETF": item[0],
-                            "z-score": round(item[1], 4),
-                            "Tail Index (ξ)": round(item[2], 4),
-                            "1-in-100yr": round(item[3], 2)
-                        })
-                    df_win = pd.DataFrame(enriched_rows)
-                else:
-                    # Old format: [ticker, z_score] - use tab1 as fallback
-                    enriched_rows = []
-                    for item in rows:
-                        ticker = item[0]
-                        z_score = item[1]
-                        full_data = tab1_full_scores.get(ticker, {})
-                        tail_index = full_data.get("tail_index", 0)
-                        return_level = full_data.get("return_level_100yr", 0)
-                        enriched_rows.append({
-                            "ETF": ticker,
-                            "z-score": round(z_score, 4),
-                            "Tail Index (ξ)": round(tail_index, 4),
-                            "1-in-100yr": round(return_level, 2)
-                        })
-                    df_win = pd.DataFrame(enriched_rows)
-                
-                df_win.insert(0, "Rank", range(1, len(df_win) + 1))
-                st.dataframe(df_win, use_container_width=True, hide_index=True)
+        # Show Worst (to avoid)
+        with st.expander(f"🔴 {label} — ETFs to AVOID at {selected_win}d"):
+            rows = []
+            for etf in worst_risky:
+                rows.append({
+                    "ETF": etf["ticker"],
+                    "z-score": round(etf["z_score"], 4),
+                    "1-in-100yr": round(etf["return_level"], 2),
+                    "Tail Index (ξ)": round(etf["tail_index"], 4),
+                    "Action": "SELL" if etf["z_score"] > 0.5 else "REDUCE"
+                })
+            df_rank = pd.DataFrame(rows).sort_values("z-score", ascending=False)
+            st.dataframe(df_rank, use_container_width=True, hide_index=True)
+
+        # Full ranking table
+        with st.expander(f"📋 Full ranking — {label} @ {selected_win}d (Lowest → Highest Risk)"):
+            rows = []
+            for etf in sorted_etfs:
+                rows.append({
+                    "Rank": len(rows) + 1,
+                    "ETF": etf["ticker"],
+                    "z-score": round(etf["z_score"], 4),
+                    "Tail Index (ξ)": round(etf["tail_index"], 4),
+                    "1-in-100yr": round(etf["return_level"], 2),
+                    "Signal": "BUY" if etf["z_score"] < -0.5 else ("HOLD" if etf["z_score"] < 0.5 else "SELL")
+                })
+            df_rank = pd.DataFrame(rows)
+            st.dataframe(df_rank, use_container_width=True, hide_index=True)
         st.divider()
 
     st.caption(f"Window: {selected_win}d · Run date: {data2.get('run_date','?')}")
