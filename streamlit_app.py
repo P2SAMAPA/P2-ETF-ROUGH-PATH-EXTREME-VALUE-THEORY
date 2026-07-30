@@ -332,7 +332,7 @@ with tab2:
             st.divider()
             continue
 
-        # Get full scores from tab1 for this universe to enrich with tail index
+        # Get full scores from tab1 for this universe to use as fallback
         tab1_universe_data = universes1.get(universe_name, {})
         tab1_full_scores = tab1_universe_data.get("full_scores", {})
 
@@ -343,10 +343,20 @@ with tab2:
             ticker = etf["ticker"]
             z_score = etf["z_score"]
             
-            # Get tail index and return level from tab1 data
+            # First try to get tail index from tab1 data (fallback)
             full_data = tab1_full_scores.get(ticker, {})
             tail_index = full_data.get("tail_index", 0)
             return_level = full_data.get("return_level_100yr", 0)
+            
+            # Check if window data has enriched format with tail index
+            # The full_ranking now has 4 elements: [ticker, z_score, tail_index, return_level]
+            full_ranking = win_data.get("full_ranking", [])
+            for item in full_ranking:
+                if len(item) >= 4 and item[0] == ticker:
+                    # Override with window-specific values if available
+                    tail_index = item[2] if len(item) > 2 else tail_index
+                    return_level = item[3] if len(item) > 3 else return_level
+                    break
             
             badge = risk_badge(z_score)
             tail_badge_html = tail_badge(tail_index)
@@ -366,21 +376,35 @@ with tab2:
         with st.expander(f"📋 Full ranking — {label} @ {selected_win}d"):
             rows = win_data.get("full_ranking", [])
             if rows:
-                # Enrich with tail index from tab1 data
-                enriched_rows = []
-                for item in rows:
-                    ticker = item[0]
-                    z_score = item[1]
-                    full_data = tab1_full_scores.get(ticker, {})
-                    tail_index = full_data.get("tail_index", 0)
-                    return_level = full_data.get("return_level_100yr", 0)
-                    enriched_rows.append({
-                        "ETF": ticker,
-                        "z-score": round(z_score, 4),
-                        "Tail Index (ξ)": round(tail_index, 4),
-                        "1-in-100yr": round(return_level, 2)
-                    })
-                df_win = pd.DataFrame(enriched_rows)
+                # Check if rows have 2 or 4 elements (new format has 4: ticker, z_score, tail_index, return_level)
+                if rows and len(rows[0]) >= 4:
+                    # New format with tail index and return level
+                    enriched_rows = []
+                    for item in rows:
+                        enriched_rows.append({
+                            "ETF": item[0],
+                            "z-score": round(item[1], 4),
+                            "Tail Index (ξ)": round(item[2], 4),
+                            "1-in-100yr": round(item[3], 2)
+                        })
+                    df_win = pd.DataFrame(enriched_rows)
+                else:
+                    # Old format: [ticker, z_score] - use tab1 as fallback
+                    enriched_rows = []
+                    for item in rows:
+                        ticker = item[0]
+                        z_score = item[1]
+                        full_data = tab1_full_scores.get(ticker, {})
+                        tail_index = full_data.get("tail_index", 0)
+                        return_level = full_data.get("return_level_100yr", 0)
+                        enriched_rows.append({
+                            "ETF": ticker,
+                            "z-score": round(z_score, 4),
+                            "Tail Index (ξ)": round(tail_index, 4),
+                            "1-in-100yr": round(return_level, 2)
+                        })
+                    df_win = pd.DataFrame(enriched_rows)
+                
                 df_win.insert(0, "Rank", range(1, len(df_win) + 1))
                 st.dataframe(df_win, use_container_width=True, hide_index=True)
         st.divider()
