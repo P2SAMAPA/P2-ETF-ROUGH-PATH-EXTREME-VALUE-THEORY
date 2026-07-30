@@ -1,6 +1,6 @@
 """
 Core Rough Path EVT engine - Pure Python implementation.
-No external signature libraries required.
+No external signature libraries required - all computations are built-in.
 """
 
 import numpy as np
@@ -16,24 +16,80 @@ def compute_log_returns(prices: pd.Series) -> pd.Series:
     return np.log(prices / prices.shift(1)).dropna()
 
 
-def compute_signature_norm_pure_python(
-    returns: np.ndarray,
+def compute_path_signature_terms(
+    path: np.ndarray,
     depth: int = 3
+) -> np.ndarray:
+    """
+    Compute signature terms of a path using the Chen-Strichartz expansion.
+    
+    For a path X, the signature is the collection of all iterated integrals:
+        S^0 = 1
+        S^1_i = ∫ dX_i
+        S^2_{ij} = ∫∫ dX_i ⊗ dX_j
+        S^3_{ijk} = ∫∫∫ dX_i ⊗ dX_j ⊗ dX_k
+    
+    This uses the lead-lag transformation for better numerical stability.
+    """
+    if len(path) < 2:
+        return np.array([np.nan])
+    
+    # Normalize path for numerical stability
+    mean = np.mean(path, axis=0)
+    std = np.std(path, axis=0) + 1e-10
+    path_norm = (path - mean) / std
+    
+    # Compute increments
+    increments = np.diff(path_norm, axis=0)
+    n = len(increments)
+    
+    sig_terms = []
+    
+    # Level 0: S^0 = 1 (always)
+    sig_terms.append(1.0)
+    
+    # Level 1: ∫ dX = sum of increments
+    level1 = np.sum(increments, axis=0)
+    sig_terms.extend(level1.tolist())
+    
+    if depth >= 2 and n > 1:
+        # Level 2: ∫∫ dX⊗dX (approximated via Riemann sums)
+        level2 = np.zeros((2, 2))
+        cumsum = np.zeros_like(increments[0])
+        for i in range(n):
+            cumsum += increments[i]
+            # Outer product with current increment
+            level2 += np.outer(cumsum, increments[i])
+        # Normalize by number of steps
+        level2 = level2 / n
+        sig_terms.extend(level2.flatten().tolist())
+    
+    if depth >= 3 and n > 2:
+        # Level 3: third-order iterated integrals
+        level3 = np.zeros((2, 2, 2))
+        cumsum2 = np.zeros((2, 2))
+        cumsum1 = np.zeros(2)
+        for i in range(n):
+            # Update cumulative sums
+            cumsum1 += increments[i]
+            # Update second-order cumsum
+            cumsum2 += np.outer(cumsum1, increments[i])
+            # Third-order term
+            level3 += np.einsum('ij,k->ijk', cumsum2, increments[i])
+        # Normalize
+        level3 = level3 / (n ** 1.5)
+        sig_terms.extend(level3.flatten().tolist())
+    
+    return np.array(sig_terms)
+
+
+def signature_l_infinity_norm(
+    returns: np.ndarray,
+    depth: int = 3,
+    lookahead: int = 5
 ) -> float:
     """
-    Compute the L∞-norm of the truncated signature using pure Python.
-    
-    This implements the signature computation via iterated integrals
-    using the Chen-Strichartz expansion.
-    
-    For a 1D path (returns), the signature terms are:
-        S^0 = 1
-        S^1 = ∫ dX = final_value - initial_value
-        S^2 = ∫∫ dX⊗dX = (final_value - initial_value)^2 / 2
-        S^3 = (final_value - initial_value)^3 / 6
-        ...
-    
-    For a 2D path (time + returns), we compute the full signature.
+    Compute the L∞-norm of the truncated signature.
     """
     if len(returns) < 2:
         return np.nan
@@ -43,93 +99,17 @@ def compute_signature_norm_pure_python(
     t = np.linspace(0, 1, n)
     path = np.column_stack([t, returns])
     
-    # Compute increments
-    increments = np.diff(path, axis=0)
+    # Apply lead-lag transformation for better financial path representation
+    # Lead-lag: (X_t, X_{t+1}) for each consecutive pair
+    lead_lag = np.column_stack([path[:-1], path[1:]])
+    # Reshape to 2D: each row is (time_t, return_t, time_{t+1}, return_{t+1})
+    lead_lag_flat = lead_lag.reshape(-1, 4)
     
-    # Compute iterated integrals up to depth
-    sig_terms = []
-    
-    # Level 1: ∫ dX = X_T - X_0
-    level1 = path[-1] - path[0]
-    sig_terms.extend(level1.tolist())
-    
-    # Level 2: ∫∫ dX⊗dX
-    if depth >= 2:
-        # For 2D path, there are 4 terms
-        level2 = np.zeros((2, 2))
-        for i in range(len(increments)):
-            # Trapezoidal approximation of iterated integrals
-            inc_i = increments[i]
-            for j in range(len(increments)):
-                if i <= j:
-                    inc_j = increments[j]
-                    level2 += np.outer(inc_i, inc_j)
-        # Normalize by number of increments
-        level2 = level2 / len(increments)
-        sig_terms.extend(level2.flatten().tolist())
-    
-    # Level 3: ∫∫∫ dX⊗dX⊗dX
-    if depth >= 3:
-        level3 = np.zeros((2, 2, 2))
-        for i in range(len(increments)):
-            inc_i = increments[i]
-            for j in range(len(increments)):
-                if i <= j:
-                    inc_j = increments[j]
-                    for k in range(len(increments)):
-                        if j <= k:
-                            inc_k = increments[k]
-                            # Outer product of three vectors
-                            level3 += np.einsum('i,j,k->ijk', inc_i, inc_j, inc_k)
-        # Normalize by number of increments
-        level3 = level3 / (len(increments) ** 2)
-        sig_terms.extend(level3.flatten().tolist())
-    
-    # L∞ norm of the signature vector
-    if len(sig_terms) == 0:
-        return np.nan
-    
-    return float(np.max(np.abs(sig_terms)))
-
-
-def compute_signature_norm_leadlag(
-    returns: np.ndarray,
-    depth: int = 3
-) -> float:
-    """
-    Lead-lag transformation signature norm.
-    This is more robust for financial time series.
-    """
-    if len(returns) < 2:
-        return np.nan
-    
-    # Lead-lag transformation: (x_t, x_{t+1})
-    lead_lag_path = []
-    for i in range(len(returns) - 1):
-        lead_lag_path.append([returns[i], returns[i+1]])
-    lead_lag_path = np.array(lead_lag_path)
-    
-    # Normalize
-    mean = np.mean(lead_lag_path, axis=0)
-    std = np.std(lead_lag_path, axis=0) + 1e-10
-    path_normalized = (lead_lag_path - mean) / std
-    
-    # Compute simplified signature
-    sig_terms = []
-    
-    # Level 1: increments
-    increments = np.diff(path_normalized, axis=0)
-    if len(increments) > 0:
-        level1 = np.mean(increments, axis=0)
-        sig_terms.extend(level1.tolist())
-    
-    # Level 2: covariance-like terms
-    if depth >= 2 and len(increments) > 1:
-        cov = np.cov(increments.T)
-        sig_terms.extend(cov.flatten().tolist())
+    # Compute signature terms on lead-lag path
+    sig_terms = compute_path_signature_terms(lead_lag_flat, depth)
     
     # L∞ norm
-    if len(sig_terms) == 0:
+    if len(sig_terms) == 0 or np.all(np.isnan(sig_terms)):
         return np.nan
     
     return float(np.max(np.abs(sig_terms)))
@@ -142,19 +122,20 @@ def rolling_signature_norms(
     lookahead: int = 5
 ) -> pd.Series:
     """
-    Compute rolling L∞-norm of path signature using pure Python.
+    Compute rolling L∞-norm of path signature.
     """
     norms = []
     dates = []
     
-    for i in range(window_days + lookahead, len(returns)):
+    total_required = window_days + lookahead
+    for i in range(total_required, len(returns)):
+        # Window of returns for signature computation
         window_returns = returns.iloc[i - window_days:i].values
         lookahead_returns = returns.iloc[i:i + lookahead].values
         full_path = np.concatenate([window_returns, lookahead_returns])
         
-        # Use lead-lag signature for better stability
-        norm = compute_signature_norm_leadlag(full_path, depth)
-        if not np.isnan(norm) and norm > 0:
+        norm = signature_l_infinity_norm(full_path, depth, lookahead)
+        if not np.isnan(norm) and norm > 1e-10:
             norms.append(norm)
             dates.append(returns.index[i])
     
@@ -195,6 +176,8 @@ def return_level(
 ) -> float:
     """
     Compute the 1-in-N-year return level.
+    
+    Formula: Return Level = u + (σ/ξ) * ((N*ζ_u)^ξ - 1)
     """
     if any(np.isnan([xi, sigma, exceed_prob])) or exceed_prob <= 0:
         return np.nan
