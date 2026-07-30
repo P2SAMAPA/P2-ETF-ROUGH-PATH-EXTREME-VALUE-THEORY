@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
-from huggingface_hub import HfFileSystem, HfApi
+from huggingface_hub import HfApi
 from datetime import date, timedelta
 import config
 import os
@@ -31,10 +31,18 @@ st.markdown("""
                font-weight:700;color:white}
 .tail-badge{background:#8e44ad;border-radius:6px;padding:2px 8px;font-size:0.7rem;
             font-weight:700;color:white}
+.tail-badge-heavy{background:#c0392b;border-radius:6px;padding:2px 8px;font-size:0.7rem;
+                  font-weight:700;color:white}
+.tail-badge-moderate{background:#f39c12;border-radius:6px;padding:2px 8px;font-size:0.7rem;
+                     font-weight:700;color:white}
+.tail-badge-thin{background:#27ae60;border-radius:6px;padding:2px 8px;font-size:0.7rem;
+                 font-weight:700;color:white}
 .metric-box{background:#f8f9fa;border-radius:10px;padding:0.8rem;margin:0.3rem 0;
             border-left:4px solid #e94560}
 .metric-label{font-size:0.75rem;color:#666;text-transform:uppercase;letter-spacing:0.5px}
 .metric-value{font-size:1.1rem;font-weight:700;color:#1a1a2e}
+.window-badge{background:#2c3e50;border-radius:12px;padding:4px 12px;font-size:0.7rem;
+              color:white;font-weight:600;display:inline-block}
 </style>
 """, unsafe_allow_html=True)
 
@@ -70,9 +78,10 @@ def risk_badge(score: float) -> str:
 
 def tail_badge(xi: float) -> str:
     if pd.isna(xi): return f'<span class="tail-badge">ξ = N/A</span>'
-    if xi > 0.3:    return f'<span class="tail-badge">ξ = {xi:.3f} (HEAVY)</span>'
-    elif xi > 0.0:  return f'<span class="tail-badge">ξ = {xi:.3f} (MODERATE)</span>'
-    else:           return f'<span class="tail-badge">ξ = {xi:.3f} (THIN)</span>'
+    if xi > 0.5:    return f'<span class="tail-badge-heavy">ξ = {xi:.3f} (VERY HEAVY)</span>'
+    elif xi > 0.3:  return f'<span class="tail-badge-heavy">ξ = {xi:.3f} (HEAVY)</span>'
+    elif xi > 0.0:  return f'<span class="tail-badge-moderate">ξ = {xi:.3f} (MODERATE)</span>'
+    else:           return f'<span class="tail-badge-thin">ξ = {xi:.3f} (THIN)</span>'
 
 
 @st.cache_data(ttl=3600)
@@ -84,7 +93,6 @@ def list_repo_files():
     
     try:
         api = HfApi(token=HF_TOKEN)
-        # Try to list files using HfApi
         files = api.list_repo_files(
             repo_id=RESULTS_REPO,
             repo_type="dataset",
@@ -109,7 +117,6 @@ def load_json_from_hf(path):
     
     try:
         api = HfApi(token=HF_TOKEN)
-        # Download file content
         content = api.hf_hub_download(
             repo_id=RESULTS_REPO,
             filename=path,
@@ -131,6 +138,7 @@ st.sidebar.markdown(f"**Signature Depth:** {config.SIGNATURE_DEPTH}")
 st.sidebar.markdown(f"**Lookahead:** {config.LOOKAHEAD_DAYS} days")
 st.sidebar.markdown(f"**EVT Threshold:** {config.EVT_THRESHOLD_QUANTILE:.0%}")
 st.sidebar.markdown(f"**Return Period:** 1-in-{config.RETURN_PERIOD_YEARS} years")
+st.sidebar.markdown("---")
 st.sidebar.markdown("**Macro signals:**")
 for col, desc, w, sign in config.MACRO_SIGNALS:
     arrow = "↑risk-on" if sign > 0 else "↑risk-off"
@@ -166,6 +174,7 @@ data2 = load_json_from_hf(tab2_path) if tab2_path else None
 universes1 = data1.get("universes", {})
 universes2 = data2.get("universes", {}) if data2 and "error" not in data2 else None
 
+st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Run date:** `{data1.get('run_date','?')}`")
 st.sidebar.success(f"✅ Loaded {len(universes1)} universes")
 
@@ -177,6 +186,8 @@ UNIVERSE_LABELS = {
     "EQUITY_SECTORS": "📈 Equity Sectors",
     "COMBINED": "🌐 Combined",
 }
+
+ntd = next_trading_day()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1
@@ -204,8 +215,6 @@ with tab1:
 **Tail index (ξ):** ξ > 0 = Fréchet (fat tail) · ξ = 0 = Gumbel · ξ < 0 = Weibull (bounded)
         """)
 
-    ntd = next_trading_day()
-
     for universe_name in UNIVERSE_ORDER:
         uni_data = universes1.get(universe_name, {})
         top_risky = uni_data.get("top_risky", [])
@@ -216,11 +225,10 @@ with tab1:
         st.markdown(f'<div class="uni-title">{label}</div>', unsafe_allow_html=True)
 
         cols = st.columns(3)
-        for idx, etf in enumerate(top_risky[:3]):  # Only show top 3 in cards
+        for idx, etf in enumerate(top_risky[:3]):
             ticker = etf["ticker"]
             z_score = etf["z_score"]
 
-            # Get full data for this ticker
             full_data = uni_data.get("full_scores", {}).get(ticker, {})
             return_level = full_data.get("return_level_100yr", 0)
             tail_index = full_data.get("tail_index", 0)
@@ -324,11 +332,24 @@ with tab2:
             st.divider()
             continue
 
+        # Get full scores from tab1 for this universe to enrich with tail index
+        tab1_universe_data = universes1.get(universe_name, {})
+        tab1_full_scores = tab1_universe_data.get("full_scores", {})
+
         cols = st.columns(3)
-        for idx, etf in enumerate(win_data.get("top_risky", [])[:3]):
+        top_risky = win_data.get("top_risky", [])
+        
+        for idx, etf in enumerate(top_risky[:3]):
             ticker = etf["ticker"]
             z_score = etf["z_score"]
+            
+            # Get tail index and return level from tab1 data
+            full_data = tab1_full_scores.get(ticker, {})
+            tail_index = full_data.get("tail_index", 0)
+            return_level = full_data.get("return_level_100yr", 0)
+            
             badge = risk_badge(z_score)
+            tail_badge_html = tail_badge(tail_index)
 
             with cols[idx]:
                 st.markdown(f"""
@@ -336,6 +357,8 @@ with tab2:
   <div class="ticker">{ticker}</div>
   <div class="score">z-score = {z_score:+.3f}</div>
   <div class="score">{badge}</div>
+  <div class="score">{tail_badge_html}</div>
+  <div class="score">1-in-100yr = {return_level:.2f}</div>
   <div class="next-day">window = {selected_win}d · 📅 {ntd}</div>
 </div>
 """, unsafe_allow_html=True)
@@ -343,8 +366,21 @@ with tab2:
         with st.expander(f"📋 Full ranking — {label} @ {selected_win}d"):
             rows = win_data.get("full_ranking", [])
             if rows:
-                df_win = pd.DataFrame(rows)
-                df_win.columns = ["ETF", "z-score"]
+                # Enrich with tail index from tab1 data
+                enriched_rows = []
+                for item in rows:
+                    ticker = item[0]
+                    z_score = item[1]
+                    full_data = tab1_full_scores.get(ticker, {})
+                    tail_index = full_data.get("tail_index", 0)
+                    return_level = full_data.get("return_level_100yr", 0)
+                    enriched_rows.append({
+                        "ETF": ticker,
+                        "z-score": round(z_score, 4),
+                        "Tail Index (ξ)": round(tail_index, 4),
+                        "1-in-100yr": round(return_level, 2)
+                    })
+                df_win = pd.DataFrame(enriched_rows)
                 df_win.insert(0, "Rank", range(1, len(df_win) + 1))
                 st.dataframe(df_win, use_container_width=True, hide_index=True)
         st.divider()
