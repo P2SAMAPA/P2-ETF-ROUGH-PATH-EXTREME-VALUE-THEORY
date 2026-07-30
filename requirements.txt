@@ -1,13 +1,7 @@
-# Core dependencies
+# Core dependencies - NO external signature libraries needed
 pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.10.0
-
-# Path signature computation (pure Python, no PyTorch)
-esig>=0.9.0
-
-# Or use iisignature as fallback
-iisignature>=0.24
 
 # HuggingFace integration
 huggingface_hub>=0.20.0
