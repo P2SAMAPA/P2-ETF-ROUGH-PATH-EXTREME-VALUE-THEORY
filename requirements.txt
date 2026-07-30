@@ -3,13 +3,11 @@ pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.10.0
 
-# PyTorch MUST be installed before signatory
-# Using CPU-only version for compatibility
-torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
+# Path signature computation (pure Python, no PyTorch)
+esig>=0.9.0
 
-# Signatory requires PyTorch to be pre-installed
-# Use a version compatible with Python 3.10-3.12
-signatory>=1.2.6
+# Or use iisignature as fallback
+iisignature>=0.24
 
 # HuggingFace integration
 huggingface_hub>=0.20.0
