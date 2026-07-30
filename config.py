@@ -1,8 +1,3 @@
-
----
-
-### 2. `config.py`
-```python
 """
 Configuration for Rough Path EVT Engine.
 """
@@ -17,13 +12,13 @@ UNIVERSES = {
     ],
     "EQUITY_SECTORS": [
         "SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLI",
-        "XLY", "XLP", "XLU", "GDX", "XME", "IWF", "XSD", "URA", "SOXX", "SMH",
+        "XLY", "XLP", "XLU", "GDX", "XME", "IWF", "XSD", "SOXX", "SMH", "URA",
         "XBI", "IWM", "IWD", "IWO", "XLB", "XLRE"
     ],
     "COMBINED": [
         "TLT", "VCIT", "LQD", "HYG", "VNQ", "GLD", "SLV",
         "SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLI",
-        "XLY", "XLP", "XLU", "GDX", "XME", "IWF", "XSD", "URA", "SOXX", "SMH",
+        "XLY", "XLP", "XLU", "GDX", "XME", "IWF", "XSD", "SOXX", "SMH", "URA",
         "XBI", "IWM", "IWD", "IWO", "XLB", "XLRE"
     ]
 }
