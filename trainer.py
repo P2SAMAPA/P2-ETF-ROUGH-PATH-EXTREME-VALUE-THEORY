@@ -69,6 +69,10 @@ def run_trainer(hf_token: Optional[str] = None) -> Dict:
         "universes": {}
     }
 
+    # ── Store per-ticker full data for window enrichment ──────────────────────
+    # This will store tail_index and return_level for each ticker across windows
+    ticker_full_data = {}
+
     # ── Process each universe ─────────────────────────────────────────────────
     for universe_name, tickers in config.UNIVERSES.items():
         logger.info(f"\n📊 Processing universe: {universe_name}")
@@ -91,8 +95,10 @@ def run_trainer(hf_token: Optional[str] = None) -> Dict:
             "windows": {}
         }
 
-        # Store per-ticker per-window results
+        # Store per-ticker per-window results with full data
         all_window_scores = {str(w): {} for w in config.WINDOW_DAYS}
+        all_window_tail_index = {str(w): {} for w in config.WINDOW_DAYS}
+        all_window_return_level = {str(w): {} for w in config.WINDOW_DAYS}
         ticker_best_scores = {}
 
         # ── Compute for each ticker ────────────────────────────────────────────
@@ -112,14 +118,21 @@ def run_trainer(hf_token: Optional[str] = None) -> Dict:
                 )
 
                 if result.get("error") is None:
+                    return_level = result["return_level_100yr"]
+                    tail_index = result["tail_index"]
+                    
                     ticker_scores.append({
                         "window": window,
-                        "return_level": result["return_level_100yr"],
-                        "tail_index": result["tail_index"],
+                        "return_level": return_level,
+                        "tail_index": tail_index,
                         "threshold": result["threshold"],
                         "exceedances": result["exceedances"]
                     })
-                    all_window_scores[str(window)][ticker] = result["return_level_100yr"]
+                    
+                    # Store full data for this ticker + window
+                    all_window_scores[str(window)][ticker] = return_level
+                    all_window_tail_index[str(window)][ticker] = tail_index
+                    all_window_return_level[str(window)][ticker] = return_level
 
             # Keep best window (max return level)
             if ticker_scores:
@@ -159,22 +172,43 @@ def run_trainer(hf_token: Optional[str] = None) -> Dict:
                 for t in ticker_best_scores
             }
 
-            # Tab 2: Per-window rankings
-            for window_str, window_scores in all_window_scores.items():
+            # ── Tab 2: Per-window rankings with FULL data ──────────────────────
+            for window_str in all_window_scores.keys():
+                window_scores = all_window_scores[window_str]
+                window_tail = all_window_tail_index[window_str]
+                window_return = all_window_return_level[window_str]
+                
                 if window_scores:
                     z_win = compute_cross_sectional_zscore(window_scores)
+                    
+                    # Build top_risky with full data
                     top_win = sorted(
                         [(t, z_win[t]) for t in z_win if not np.isnan(z_win[t])],
                         key=lambda x: x[1],
                         reverse=True
                     )[:5]
-
+                    
+                    # Build full ranking with tail index and return level
+                    full_ranking = []
+                    for t in z_win:
+                        if not np.isnan(z_win[t]):
+                            full_ranking.append({
+                                "ticker": t,
+                                "z_score": z_win[t],
+                                "tail_index": window_tail.get(t, 0),
+                                "return_level": window_return.get(t, 0)
+                            })
+                    
+                    # Sort full ranking by z-score
+                    full_ranking = sorted(full_ranking, key=lambda x: x["z_score"], reverse=True)
+                    
                     tab2_universe["windows"][window_str] = {
                         "top_risky": [
                             {"ticker": t, "z_score": z} for t, z in top_win
                         ],
                         "full_ranking": [
-                            [t, z_win[t]] for t in z_win if not np.isnan(z_win[t])
+                            [item["ticker"], item["z_score"], item["tail_index"], item["return_level"]]
+                            for item in full_ranking
                         ]
                     }
 
