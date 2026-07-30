@@ -58,7 +58,7 @@ MACRO_COLS_EXTENDED = ["IG_SPREAD", "HY_SPREAD"]
 # ── Signature / EVT Configuration ──────────────────────────────────────────
 
 SIGNATURE_DEPTH = 3           # Truncation depth of path signature
-WINDOW_DAYS = [63, 252, 504, 1008, 2016, 4032, 4536]       # Rolling windows for signature computation
+WINDOW_DAYS = [63, 252, 504, 1008]       # Rolling windows for signature computation
 LOOKAHEAD_DAYS = 5            # Forward horizon for path shape
 
 # EVT parameters
