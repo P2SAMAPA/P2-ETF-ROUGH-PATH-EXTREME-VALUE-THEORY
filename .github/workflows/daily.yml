@@ -3,7 +3,7 @@ name: Daily Rough-EVT Run
 on:
   schedule:
     # 00:30 UTC Monday–Saturday
-    - cron: '30 23 * * 1-6'
+    - cron: '30 22 * * 1-6'
   workflow_dispatch:
 
 jobs:
